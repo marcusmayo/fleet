@@ -1,5 +1,7 @@
 # Agent Fleet — Bicep IaC + Walkthrough Runbook
 
+![fleetctl plan — the read-only preview of everything `up` would create](docs/hero.png)
+
 Stand up a **Castor-profile VM** and a **Keel-profile VM**, add a second agent **through the
 frontend**, then **decommission it** — testing each for functionality. A **shared core** vendored
 into each agent, one Bicep module, per-agent isolation, Cloudflare-Tunnel transport.
