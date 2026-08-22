@@ -56,6 +56,31 @@ test('request-time read: flipping the environment flips behaviour with no restar
   assert.strictEqual(run(undefined, {}).code, 403, 'the same process refuses again the moment it is unset');
 });
 
+// The socket door. These two exist because it did NOT: the upgrade handler carried its own copy
+// of the checks, requireAuth grew a local branch, the copy did not, and a laptop in local mode got
+// a page that rendered and a Send button that silently did nothing (upgrade -> 401).
+const up = (env, req) => {
+  const prev = process.env.AUTH_MODE;
+  if (env === undefined) delete process.env.AUTH_MODE; else process.env.AUTH_MODE = env;
+  try { return auth.wsUpgradeAllowed(Object.assign({ headers: {} }, req || {})); }
+  finally { if (prev === undefined) delete process.env.AUTH_MODE; else process.env.AUTH_MODE = prev; }
+};
+
+test('the socket door answers the same policy as the HTTP door', () => {
+  assert.strictEqual(up('local', {}), true, 'local mode must open the upgrade, not just the page');
+  assert.strictEqual(up(undefined, {}), false, 'unset: a bare upgrade is refused, exactly as before');
+  assert.strictEqual(up(undefined, { headers: { 'cf-access-client-id': 'x' } }), true);
+  assert.strictEqual(up(undefined, { headers: { 'cf-access-jwt-assertion': 'y' } }), true);
+  assert.strictEqual(up(undefined, { session: { authed: true } }), true);
+});
+
+test('the socket door does not relax for near-miss values either', () => {
+  for (const v of ['', 'true', '1', 'localhost', 'dev', 'off']) {
+    assert.strictEqual(up(v, {}), false, JSON.stringify(v) + ' must refuse the upgrade');
+  }
+  assert.strictEqual(up(' LOCAL ', {}), true, 'trimmed case-fold of the literal is the same word');
+});
+
 test('the mode is LOUD: banner endpoint, banner UI, and a boot warning all exist', () => {
   const ops = fs.readFileSync(path.resolve(__dirname, '..', '..', 'core', 'webchat-ops.js'), 'utf8');
   assert.match(ops, /\/auth-mode/);
