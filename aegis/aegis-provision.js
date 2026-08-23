@@ -23,7 +23,7 @@ const PROFILES = ['castor', 'keel'];
 
 // --- auth gate: require the same Aegis operator session the webchat uses ---
 app.use((req, res, next) => {
-  // verifyAegisSession(req) should confirm the TOTP-backed operator session.
+  // verifyAegisSession(req) should confirm the operator session established at the edge.
   // Left as a hook: wire to your existing webchat auth middleware.
   if (!verifyAegisSession(req)) return res.status(401).json({ error: 'unauthorized' });
   next();

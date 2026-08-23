@@ -115,7 +115,7 @@ dashboard → **Networks → Tunnels → Create tunnel** (name it after the agen
 1. Copy the **tunnel token** (a long `eyJ…` string) — you'll `export CF_TUNNEL_TOKEN=…` per agent.
 2. **Public hostname:** `<agent-name>.<yourdomain>` → service `http://localhost:8443` (the webchat).
 3. **Access → Applications → Add self-hosted app** for that hostname, policy = *your email only*
-   (this is the edge login in front of the app's own TOTP). To require a second factor, add an
+   (Cloudflare Access is the sole authenticator; the app has no login of its own). To require a second factor, add an
    **authenticator/MFA method** in the app's **MFA** settings.
 4. *(Hardened path only)* add a second hostname `ssh-<agent-name>.<yourdomain>` → `ssh://localhost:22`
    and an Access app, so you can bootstrap without any public IP.
@@ -198,7 +198,7 @@ over ~4–8 minutes. Then inject runtime secrets and confirm health:
 
 ```powershell
 .\scripts\ssh-open.ps1 -AgentName atlas-01      # temp SSH rule for your IP (NSG is deny-all)
-# ssh in (command is printed); on the VM run:  bash infra/scripts/bootstrap.sh    (TOTP / model key)
+# ssh in (command is printed); on the VM run:  bash infra/scripts/bootstrap.sh    (model keys)
 .\scripts\ssh-close.ps1 -AgentName atlas-01     # back to zero-inbound
 
 node .\provision\bin\fleetctl.js check .\agents\atlas-01.agent.jsonc --live   # expect HTTP 200
@@ -262,7 +262,7 @@ This is the validated end-to-end sequence (run from the repo root, Windows Power
    cloud-init status                             # expect: status: done
    tail -n 3 /var/log/agent-image-build.log      # expect: BUILT <profile>:<sha>
    grep agent_name ~/agent/system/agent.yaml     # expect: agent_name: "<name>"  (brand)
-   cd ~/agent && bash infra/scripts/bootstrap.sh # prompts for TOTP + model keys; starts the stack
+   cd ~/agent && bash infra/scripts/bootstrap.sh # fetches the model keys; starts the stack
    sudo docker ps                                # expect the webchat container Up
    exit
    ```
@@ -295,7 +295,7 @@ the same `up` runbook drives both. What differs:
 | default build repo | `keel` | `castor` |
 | Azure extras | VM only | + per-agent **Key Vault**, user-assigned **managed identity**, blob **backup** (the `wantsVault` branch in `vm.bicep`) |
 | deployer object id | not needed | resolved (`az ad signed-in-user show`) for the Key Vault Secrets Officer grant |
-| bootstrap secrets | TOTP + Anthropic key | TOTP + model/vision keys (LiteLLM/OpenRouter) |
+| bootstrap secrets | Anthropic key | model/vision keys (LiteLLM/OpenRouter) |
 
 So a Castor agent is just `up .\agents\<name>.agent.jsonc --go` with `profile: castor`; the
 extra vault/identity resources and the `castor.bicepparam` selection happen automatically.
@@ -363,7 +363,7 @@ bash scripts/set-secrets.sh rg-<castor-name>
 ```
 
 **Bootstrap** — non-interactive: it fetches the secrets above via managed identity, generates
-and prints a TOTP QR to enrol, seeds the egress config, and brings the stack up:
+seeds the egress config, and brings the stack up:
 
 ```bash
 # public-IP path:
@@ -374,7 +374,7 @@ ssh -i ~/.ssh/agentfleet agentadmin@"$PUBIP"
 # on the VM:
 cd ~/agent
 tail -n 5 -f /var/log/agent-image-build.log     # wait for "BUILT castor:<sha>", then Ctrl-C
-./infra/scripts/bootstrap.sh                     # MI-fetches keys; scan the printed TOTP QR to enrol
+./infra/scripts/bootstrap.sh                     # MI-fetches the model keys and brings the stack up
 ```
 
 Expected tail of bootstrap: `publishing webchat on 127.0.0.1:8443` → smoke test → `bootstrap complete`.
@@ -387,10 +387,10 @@ Expected tail of bootstrap: `publishing webchat on 127.0.0.1:8443` → smoke tes
 ```
 
 Then from your **phone or laptop browser**: open `https://<castor-name>.<yourdomain>` → Cloudflare
-Access login → the webchat loads → enter your TOTP.
+Access login → the webchat loads. There is no second prompt: the edge is the factor.
 
 > ✅ **Checklist:** RG `Succeeded` · image built · `bootstrap complete` · webchat reachable
-> at its Cloudflare hostname · TOTP prompt appears · smoke test all PASS.
+> at its Cloudflare hostname · Access login appears · smoke test all PASS.
 
 ---
 
@@ -485,7 +485,7 @@ Access app**, revoke its **model key**, and remove its **Aegis registry entry**.
 | Shared core intact | on VM: `bash scripts/verify-core.sh scripts && bash gate/verify-core.sh gate` | both `verify-core OK` |
 | Container healthy | on VM: `curl -fsS http://127.0.0.1:8443/health/liveliness -o /dev/null && echo ok` | `ok` (HTTP 200) |
 | Webchat reachable | browser: `https://<name>.<domain>` (after Access) | page loads |
-| MFA enforced | webchat prompts for TOTP (or Access MFA) | prompt appears |
+| MFA enforced | Cloudflare Access MFA (the app has no login) | Access prompt appears |
 | Redaction gate | on VM: `node gate/ask.js "email me at test@example.com"` then check `logs/audit.jsonl` | entity tokenized, audit entry appended |
 | State writable | on VM: `scripts/smoke-test.sh` | `state volume writable` PASS |
 | Isolation | after teardown of the added agent, the others still answer | all reachable |
@@ -513,7 +513,7 @@ scripts/decommission.sh <keel-name>
   the NSG denies every inbound rule and you bootstrap via `cloudflared access ssh`. The `SSH_CIDR`
   option exists only to make first-run lifecycle testing frictionless.
 - **Secrets:** the tunnel token is the only secret in `customData` and is scrubbed from cloud logs
-  after install. Runtime secrets (TOTP, model key) are injected over SSH by `bootstrap.sh`, never in
+  after install. Runtime secrets (the model keys) are injected over SSH by `bootstrap.sh`, never in
   the template. Production upgrade: pull all three from **Key Vault** via managed identity.
 - **Shared-core integrity:** every agent's build fails loud if a vendored core module drifts from the
   fleet-core manifest, so the egress gate and redaction logic can't silently diverge between agents.
