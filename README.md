@@ -71,6 +71,11 @@ A new agent Aegis spins up inherits whatever core was last synced into the agent
 
 ```
 fleet/
+├── provision/                        # the fleetctl CLI — the path this runbook uses
+│   ├── bin/fleetctl.js               # up · rebuild · check · resize · migrate · policy · aegis · decommission
+│   ├── lib/  test/                   # lanes + the suite (npm test)
+│   └── README.md
+├── agents/                           # one contract per agent, tracked; example.agent.jsonc is the template
 ├── core/                             # shared modules vendored into each agent (model-routing, capability, gate/…)
 │   ├── *.js   manifest.sha256        # scripts-dest modules + drift manifest
 │   ├── gate/*.js  gate/manifest.sha256
@@ -83,6 +88,7 @@ fleet/
 │   └── params/{castor,keel}.bicepparam
 ├── scripts/{deploy,decommission,smoke-test}.sh
 ├── aegis/aegis-provision.js          # the frontend "Add/Decommission" endpoint (stub)
+├── docs/                             # images the READMEs reference
 └── README.md                         # this runbook
 ```
 
