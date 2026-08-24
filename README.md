@@ -318,6 +318,27 @@ extra vault/identity resources and the `castor.bicepparam` selection happen auto
 - **`build-image.sh` and cloud-init:** the build script defaults `NOCACHE` to empty
   (`${NOCACHE:-}`) so it runs under cloud-init's `set -u`; pass `NOCACHE=--no-cache` only for a
   manual no-cache rebuild.
+- **The image is built with BuildKit, and the builder is asserted rather than inherited.**
+  Without the `docker-buildx` package `docker build` falls back to the legacy builder that
+  engine 29 deprecated — same image today, a different builder from the rest of the fleet, and
+  nothing in the output saying which one you got. cloud-init installs the plugin, and
+  `build-image.sh` refuses to run without it. On a VM provisioned before this:
+  `sudo apt-get -o DPkg::Lock::Timeout=420 install -y docker-buildx`.
+- **`apt` on a just-started VM races `unattended-upgrades`.** The timer fires shortly after
+  boot and holds `/var/lib/dpkg/lock-frontend`; an `apt-get` in a `run-command` then dies with
+  "Could not get lock". Every apt invocation carries `-o DPkg::Lock::Timeout=<seconds>` so it
+  waits instead of failing — the same block succeeded on two VMs and failed on the third for
+  no reason but timing.
+- **A native command's stderr is a *terminating* error under `$ErrorActionPreference='Stop'`.**
+  `npm` writes its version notice to stderr, which aborts the surrounding block before
+  `$LASTEXITCODE` is ever read — and a `Pop-Location` after it never runs. The contract is the
+  exit code: set the preference to `Continue` around the native call, capture `$LASTEXITCODE`,
+  then throw on it yourself.
+- **A grep of test output must pin the reporter.** `npm test` in `provision/` runs node's
+  *spec* reporter, whose summary lines are `ℹ`-prefixed; TAP's are `#`-prefixed. A filter
+  written for one silently matches nothing under the other, so the block reports no counts
+  while still passing. Gate on the exit code and treat the text as display only, or pass
+  `--test-reporter=tap` and match that.
 
 ### Roadmap — Aegis-driven provisioning (next)
 
