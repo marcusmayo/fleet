@@ -6,7 +6,11 @@
 # are fetched at first boot from the agent's Key Vault via managed identity
 # (seeded by `fleetctl set-secrets`) — never in this file, never over SSH.
 package_update: true
-packages: [docker.io, docker-compose-v2, git, python3-qrcode, curl]
+# docker-buildx is not optional dressing: without the plugin, `docker build` silently falls
+# back to the LEGACY builder, which engine 29 has long deprecated. Installed here so a new VM
+# never builds on a different builder than the fleet, and build-image.sh can ASSERT one
+# rather than accept whichever happens to be present.
+packages: [docker.io, docker-buildx, docker-compose-v2, git, python3-qrcode, curl]
 runcmd:
   - set -e
   # --- Cloudflare Tunnel (outbound-only; no inbound ports required) ---
@@ -109,5 +113,5 @@ runcmd:
   - 'printf "[Unit]\nDescription=Fleet agent intake sweep\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/agent-intake\n" > /etc/systemd/system/agent-intake.service'
   - 'printf "[Unit]\nDescription=Fleet agent intake timer\n\n[Timer]\nOnBootSec=90\nOnUnitActiveSec=120\n\n[Install]\nWantedBy=timers.target\n" > /etc/systemd/system/agent-intake.timer'
   - 'systemctl daemon-reload && systemctl enable --now agent-intake.timer || echo "intake timer enable failed (non-fatal)"'
-  - "{ dpkg-query -W docker.io docker-compose-v2 git cloudflared; } > /var/log/agent-provision-versions.log 2>&1"
+  - "{ dpkg-query -W docker.io docker-buildx docker-compose-v2 git cloudflared; } > /var/log/agent-provision-versions.log 2>&1"
 final_message: "agent (__AGENT_PROFILE__) cloud-init complete after $UPTIME s -- it self-bootstraps from its Key Vault; seed with 'fleetctl set-secrets <agent>' if you haven't. Logs: /var/log/agent-bootstrap.log"
