@@ -156,6 +156,14 @@ runcmd:
     ExecStart=/usr/bin/node aegis.js
     Restart=on-failure
     RestartSec=10
+    # The plane restarts itself by EXITING 75, never by asking. NoNewPrivileges=true makes the
+    # kernel ignore sudo's setuid bit for anything this service spawns, so `sudo systemctl
+    # restart aegis` died as the service user before pam -- no restart, no auth.log line, no
+    # crash -- and three updates vanished silently. These two keys are load-bearing together:
+    # the first stops 75 counting as a failure against StartLimitBurst, the second restarts
+    # anyway. SuccessExitStatus alone would make the plane exit cleanly and stay down.
+    SuccessExitStatus=75
+    RestartForceExitStatus=75
     NoNewPrivileges=true
     PrivateTmp=true
 
@@ -165,8 +173,10 @@ runcmd:
   - chown -R __ADMIN_USER__:__ADMIN_USER__ /home/__ADMIN_USER__/aegis /home/__ADMIN_USER__/agent-fleet-iac
   # The service user may restart ITS OWN unit and nothing else: the one privilege a self-update
   # needs (git pulls are its own files), narrow enough to be a Can't -- no shell, no other unit.
-  - printf '__ADMIN_USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart aegis\n' > /etc/sudoers.d/aegis-restart
-  - chmod 0440 /etc/sudoers.d/aegis-restart && visudo -cf /etc/sudoers.d/aegis-restart
+  # No sudoers grant for the restart. The rule that used to live here gave the plane a
+  # privilege it could never exercise -- NoNewPrivileges=true means the kernel ignores sudo's
+  # setuid bit for every child of this service -- so it documented a capability that did not
+  # exist and hid the real failure. The plane exits 75 and systemd brings it back.
   # fleetctl as a command on the hosted plane too: the lanes' own hints say "fleetctl <verb>",
   # and an operator reading them over SSH or in a run-command should be able to run them verbatim.
   - 'ln -sf /home/__ADMIN_USER__/agent-fleet-iac/provision/bin/fleetctl /usr/local/bin/fleetctl && chmod 0755 /home/__ADMIN_USER__/agent-fleet-iac/provision/bin/fleetctl'

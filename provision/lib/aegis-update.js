@@ -27,6 +27,18 @@ function planScript() {
     '  DIRTY=$(sudo -u $U -H git -C "$D" status --porcelain --untracked-files=no 2>/dev/null | wc -l);',
     '  echo "$R local=$L remote=$RM branch=$B dirty=$DIRTY"; done',
     'echo "unit=$(systemctl is-active aegis)"',
+    // git can only say what is on disk. A plane that pulled and never restarted is clean,
+    // current and active by every git measure while running months-old lanes, so ask the only
+    // thing that knows what it booted: the process itself, over loopback (the edge is the
+    // door, so there is no auth here). Unread is reported as unread, never as "no skew".
+    'R=$(curl -s --max-time 5 http://127.0.0.1:7070/api/plane 2>/dev/null || true)',
+    'if [ -n "$R" ]; then',
+    '  S=$(printf "%s" "$R" | grep -o "\\"skewed\\":[a-z]*" | head -1 | cut -d: -f2)',
+    '  D=$(printf "%s" "$R" | grep -o "\\"skewDetail\\":\\[[^]]*\\]" | head -1 | cut -d: -f2-)',
+    '  echo "plane skewed=${S:-unknown} detail=${D:-none}"',
+    'else',
+    '  echo "plane skewed=unread detail=none"',
+    'fi',
   ].join('\n') + '\n';
 }
 function goScript() {
@@ -51,6 +63,12 @@ function parseHeads(text) {
   }
   const u = String(text || '').match(/^unit=(\S+)/m);
   if (u) out.unit = u[1];
+  const p = String(text || '').match(/^plane skewed=(\S+) detail=(.*)$/m);
+  if (p) {
+    let detail = [];
+    try { const j = JSON.parse(p[2]); if (Array.isArray(j)) detail = j.map(String); } catch { /* not an array -- say nothing rather than guess */ }
+    out.plane = { skewed: p[1] === 'true', unread: p[1] !== 'true' && p[1] !== 'false', detail };
+  }
   return out;
 }
 function parseGo(text) {
@@ -80,8 +98,12 @@ async function runAegisUpdate(file, opts = {}) {
     console.log('  ' + r.padEnd(16) + (!h ? col.red('unread') : h.error ? col.red(h.error) : (h.pending ? col.yellow('update pending  ' + h.local + ' -> ' + h.remote) : col.green('current  ' + h.local)) + col.dim('   ' + h.branch + (h.dirty ? '   DIRTY: ' + h.dirty + ' local change(s) — a pull may refuse' : ''))));
   }
   console.log('  unit            ' + (heads.unit === 'active' ? col.green('active') : col.red(heads.unit || 'unknown')));
+  const pl = heads.plane;
+  console.log('  running code    ' + (!pl || pl.unread ? col.dim('unread — the plane did not answer on loopback')
+    : pl.skewed ? col.red('STALE — ' + (pl.detail.join('; ') || 'the process is older than the checkout'))
+    : col.green('matches the checkouts')));
   console.log('  attestation     ' + col.dim(required));
-  console.log(col.dim('  --go pulls both checkouts fast-forward-only as ' + ADMIN + ' and restarts the unit; a failed pull restarts nothing'));
+  console.log(col.dim('  --go pulls both checkouts fast-forward-only as ' + ADMIN + ' and restarts the unit — including when there was nothing to pull, which is how a STALE plane is recovered; a failed pull restarts nothing'));
   if (!opts.go) { console.log(col.yellow('\nplan only — nothing changed. Re-run with --go --attest "' + required + '" to update.')); return 0; }
 
   const policyPath = resolvePolicyPath();
