@@ -120,3 +120,35 @@ test('skills params: mountSkills throws at boot on a bad param spec, before serv
     skills: [{ route: '/bad', bin: 'echo', args: [], params: [{ name: 'x' }] }],
   }), /unconstrained pass-through is refused/);
 });
+
+// ---- the config/core contract ----------------------------------------------------
+// Vendored core and agent config move on separate schedules. The failure this pins is the
+// SILENT one: an older core does not know `params`, ignores the key, and spawns the tool
+// with no arguments. Declaring the floor turns that into a boot refusal.
+
+test('skills contract: absent means 1, so an untouched agent needs no edit', () => {
+  assert.strictEqual(skills.assertContract({ skills: [] }), 1);
+  assert.strictEqual(skills.assertContract({}), 1);
+});
+
+test('skills contract: a config newer than its core refuses, and the message names the fix', () => {
+  const tooNew = { contract: skills.SKILLS_CONTRACT_MAX + 1 };
+  assert.throws(() => skills.assertContract(tooNew), (e) => {
+    assert.match(e.message, /NEWER than its core/);
+    assert.match(e.message, /sync-core\.sh/);
+    assert.match(e.message, /do not edit the stamp/);
+    return true;
+  });
+});
+
+test('skills contract: the params grammar is contract 2 and sits inside the ceiling', () => {
+  assert.ok(skills.SKILLS_CONTRACT_MAX >= 2);
+  assert.strictEqual(skills.assertContract({ contract: 2 }), 2);
+});
+
+test('skills contract: a nonsense value is a boot error, never a silent default', () => {
+  for (const bad of ['two', 0, -1, 1.5, null, true]) {
+    assert.throws(() => skills.assertContract({ contract: bad }),
+      /contract must be a positive integer/, 'contract: ' + JSON.stringify(bad));
+  }
+});
