@@ -3,7 +3,7 @@
 # Lives in fleet/core/. Run from a fleet checkout.
 #
 # Usage:  ./core/sync-core.sh <agent-repo-root> <scripts-dest> [gate-dest]
-#   e.g.  ./core/sync-core.sh ~/castor                    scaffold/scripts scaffold/gate
+#   e.g.  ./core/sync-core.sh ~/castor                    scripts gate
 #         ./core/sync-core.sh ~/keel scripts          gate
 #
 # Vendors core/*.js (+ fetch-secret.sh + verify-core.sh + a stamp) into <scripts-dest>,

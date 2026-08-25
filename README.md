@@ -50,7 +50,7 @@ Propagate a change deliberately:
 git add core/<changed> && git commit -m "core: <what>" && git push
 
 # 2. sync into each agent repo (from a fleet checkout):
-./core/sync-core.sh ~/castor                    scaffold/scripts scaffold/gate
+./core/sync-core.sh ~/castor                    scripts gate
 ./core/sync-core.sh ~/keel scripts          gate
 
 # 3. in each agent repo: commit the vendored files + .fleet-core-version, rebuild --no-cache.

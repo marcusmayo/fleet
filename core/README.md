@@ -35,7 +35,7 @@ Change a shared module **only in core/ here**, then propagate:
     git add core/<changed> core/manifest.sha256 core/gate/manifest.sha256 && git commit -m "core: <what>" && git push
 
     # 2. sync into each agent repo (from a fleet checkout):
-    ./core/sync-core.sh ~/castor                    scaffold/scripts scaffold/gate
+    ./core/sync-core.sh ~/castor                    scripts gate
     ./core/sync-core.sh ~/keel scripts          gate
 
     #    (sync-core REFUSES to vendor from a stale manifest -- it regenerates it and asks for the commit first,
@@ -56,5 +56,5 @@ Change a shared module **only in core/ here**, then propagate:
 
 | Profile | scripts dest     | gate dest     |
 |---------|------------------|---------------|
-| castor  | scaffold/scripts | scaffold/gate |
+| castor  | scripts | gate |
 | keel    | scripts          | gate          |
