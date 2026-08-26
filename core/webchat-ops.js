@@ -34,6 +34,23 @@ function modelLabel(slug) {
     .join(' ');
 }
 
+// ---- upload filenames ------------------------------------------------------------------
+// Truncate the BASENAME, never the extension. The old form ended `.slice(0, 120)`, which cuts
+// from the tail -- exactly where the extension lives. A long "..._transcript.txt" arrived as
+// "..._tr", intake could not classify it and quarantined it as an unsupported type, and the
+// operator was left with a file the gate was right to refuse and no way to see why. The gate
+// was not wrong; the name was already damaged before it reached the gate.
+const NAME_MAX = 120;
+function safeUploadName(n) {
+  const raw = String(n || '').replace(/[^A-Za-z0-9._-]/g, '_');
+  if (raw.length <= NAME_MAX) return raw;
+  const dot = raw.lastIndexOf('.');
+  // A "." near the end is an extension; a "." early in a long name is not, and a 40-character
+  // tail after a dot is not one either -- keeping it would just move the truncation problem.
+  const ext = (dot > 0 && raw.length - dot <= 12) ? raw.slice(dot) : '';
+  return raw.slice(0, NAME_MAX - ext.length) + ext;
+}
+
 // ---- big-JSON routes -------------------------------------------------------------------
 // Routes whose body is a base64 payload rather than a control message. An agent's global
 // express.json() must SKIP these, or it rejects the body before the route's own parser is
@@ -194,7 +211,7 @@ function mountChatOps(app, opts) {
   } catch (e) { stageYamlErr = 'cannot read system/agent.yaml: ' + e.message; }
   const STAGE_DIR = path.join(stateDir, 'staging');
   const STAGE_DEST = path.join(cwd, STAGE_DEST_REL);
-  const safeFile = (n) => String(n || '').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+  const safeFile = safeUploadName;
   // The route-level parser only gets a turn if the agent's GLOBAL express.json() lets the body
   // through first. It did not: server.js registers a small global parser before mountChatOps is
   // called, so that one consumed the body and 413'd, and the handler below then reported a
@@ -491,4 +508,4 @@ function mountChatOps(app, opts) {
   });
 }
 
-module.exports = { mountChatOps, modelLabel, MODEL_LABELS, BIG_JSON_ROUTES, BIG_JSON_LIMIT, usesBigJson };
+module.exports = { mountChatOps, modelLabel, MODEL_LABELS, BIG_JSON_ROUTES, BIG_JSON_LIMIT, usesBigJson, safeUploadName, NAME_MAX };

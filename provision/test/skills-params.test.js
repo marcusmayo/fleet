@@ -187,3 +187,40 @@ test('skill jobs: a record written before argv was projected still reads, as an 
   const [row] = skills.listJobs(cwd, 10);
   assert.deepStrictEqual(row.args, [], 'absent argv reads as [] rather than undefined');
 });
+
+// ---- upload filenames -------------------------------------------------------------
+// The sanitiser ended `.slice(0,120)`, which truncates from the tail -- exactly where the
+// extension lives. A long "..._transcript.txt" arrived as "..._tr"; intake then refused it
+// as an unsupported type and quarantined it. The gate was right. The name was damaged
+// before it got there, and the operator had no way to see that from the refusal.
+
+const ops = require('../../core/webchat-ops.js');
+
+test('upload names: a long name keeps its extension so intake can still classify it', () => {
+  const long = 'Meeting Transcript - Marketer API 2.0 Kickoff with several attendees, 2026-08-24, full session recording-transcript.txt';
+  const out = ops.safeUploadName(long);
+  assert.ok(out.length <= ops.NAME_MAX, 'still bounded');
+  assert.ok(out.endsWith('.txt'), 'extension survived truncation: ' + out.slice(-20));
+});
+
+test('upload names: short names are untouched, and unsafe characters still go', () => {
+  assert.strictEqual(ops.safeUploadName('short.txt'), 'short.txt');
+  assert.strictEqual(ops.safeUploadName('a b/c.txt'), 'a_b_c.txt');
+  assert.strictEqual(ops.safeUploadName('../../etc/passwd'), '.._.._etc_passwd', 'traversal is flattened, not preserved');
+});
+
+test('upload names: a long tail after a dot is not treated as an extension', () => {
+  const out = ops.safeUploadName('b'.repeat(200) + '.verylongsuffixnotanextension');
+  assert.strictEqual(out.length, ops.NAME_MAX);
+  assert.ok(!out.includes('.'), 'a 28-char tail is not an extension worth preserving');
+});
+
+test('upload names: a leading dot is not an extension', () => {
+  assert.strictEqual(ops.safeUploadName('.bashrc'), '.bashrc');
+});
+
+test('upload names: the result is always bounded, whatever comes in', () => {
+  for (const n of ['x'.repeat(5000), 'y'.repeat(500) + '.txt', '', null, undefined]) {
+    assert.ok(ops.safeUploadName(n).length <= ops.NAME_MAX);
+  }
+});
