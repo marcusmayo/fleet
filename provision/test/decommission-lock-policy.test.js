@@ -121,3 +121,42 @@ test('source guard: the plan and the delete read the SAME verdict function', () 
   assert.strictEqual(src.split('lockVerdict(s.locks, s.protection)').length - 1, 2, 'printPlan and execute must both call it');
   assert.strictEqual(src.split("l.name !== 'fleet-protect'").length - 1, 1, 'the fleet-protect rule lives in one place only');
 });
+
+// ---- one policy file --------------------------------------------------------------
+// $AEGIS_POLICY let the plane read its own untracked copy while fleetctl read the tracked
+// one. Both answered truthfully and they disagreed: the panel drew an agent unprotected
+// while decommission would have refused it. The override is gone from cloud-init; these
+// pin the two consequences that must not quietly come back.
+
+test('policy: telegramChatIds is retired, and says where it went rather than reading as unknown', () => {
+  const P = require('../lib/policy');
+  assert.ok(P.RETIRED && P.RETIRED.telegramChatIds, 'the key must be recorded as retired');
+  let msg = '';
+  try { P.setPolicy({ key: 'telegramChatIds', value: '12345678', attest: 'x' }); }
+  catch (e) { msg = e.message; }
+  assert.match(msg, /no longer a policy key/);
+  assert.match(msg, /aegis\.config\.json/, 'must name the new home');
+  assert.doesNotMatch(msg, /unknown key/, 'a retired key is not an unknown key');
+});
+
+test('policy: an actually-unknown key still lists what is settable', () => {
+  const P = require('../lib/policy');
+  let msg = '';
+  try { P.setPolicy({ key: 'nonsense', value: '1', attest: 'x' }); } catch (e) { msg = e.message; }
+  assert.match(msg, /unknown key/);
+  assert.match(msg, /settable:/);
+});
+
+test('policy: telegramChatIds is not a default either -- it cannot reappear via DEFAULTS', () => {
+  const P = require('../lib/policy');
+  const pol = P.loadPolicy(path.join(__dirname, '..', 'aegis.policy.jsonc'));
+  assert.strictEqual(pol.telegramChatIds, undefined,
+    'a committed policy file must not carry a chat id, not even as an empty default');
+});
+
+test('cloud-init: a new plane is not born with an AEGIS_POLICY override', () => {
+  const ci = fs.readFileSync(path.join(__dirname, '..', '..', 'bicep', 'cloud-init', 'aegis-cloudflared.yaml'), 'utf8');
+  assert.doesNotMatch(ci, /Environment=AEGIS_POLICY=/,
+    'the override is what let the panel and the CLI answer from different files');
+  assert.match(ci, /FLEET_IAC_ROOT=/, 'the plane still needs to know where the tracked policy lives');
+});

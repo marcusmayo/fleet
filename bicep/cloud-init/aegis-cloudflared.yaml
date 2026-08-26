@@ -132,8 +132,10 @@ runcmd:
     Environment=AEGIS_BIND=127.0.0.1
     Environment=AEGIS_PORT=7070
     Environment=FLEET_IAC_ROOT=/home/__ADMIN_USER__/agent-fleet-iac
-    # live policy file (untracked); fleetctl's resolver and aegis.js both honour it
-    Environment=AEGIS_POLICY=/home/__ADMIN_USER__/aegis/aegis.policy.jsonc
+    # NO AEGIS_POLICY. The plane reads the TRACKED policy under FLEET_IAC_ROOT -- the same
+    # file fleetctl reads on the workstation. A second live copy here is what let the panel
+    # and the CLI disagree about whether an agent was protected, each answering truthfully
+    # from a different file. One file; `Update plane` is the reconcile.
     Environment=AZURE_CLIENT_ID=__MSI_CLIENT_ID__
     # The control plane's own identity IS the deployer on this host: agent vaults grant
     # Key Vault Secrets Officer to this object id so `fleetctl set-secrets` can seed them.

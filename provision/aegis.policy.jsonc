@@ -10,11 +10,22 @@
   // Agents that decommission MUST refuse to tear down. Changing this list is an
   // attested policy.set (value = comma-separated names, or `none` to clear); the
   // set also syncs an Azure CanNotDelete lock onto each protected rg-<name>.
+  // THIS IS THE ONLY POLICY FILE. The plane used to read its own untracked copy via
+  // $AEGIS_POLICY, which meant the panel and the CLI could answer differently about the same
+  // fact -- and did: an agent showed unprotected in the panel while decommission would have
+  // refused. The plane now reads this file from its own checkout, so `Update plane` is the
+  // reconcile and a policy change on origin shows as UPDATE PENDING rather than sitting
+  // invisible. The panel can REQUEST a protection change; only `fleetctl policy set` plus a
+  // commit decides one.
   "protectedAgents": ["smalt"],
   // Agent-to-agent relay allowlist -- DIRECTED pairs "from>to". Empty means no relay
   // is possible; the capability does not exist until an operator attests a pair.
   // Aegis is always the mediator: no agent has a network path to another.
-  "a2aPairs": ["heimdall>bosun"],
+  "a2aPairs": [],
+  // telegramChatIds is deliberately NOT a key here. It is a per-installation identifier and
+  // this file is committed, so listing it would put a chat id in git. It lives in the plane's
+  // aegis.config.json; `policy set telegramChatIds` refuses with that redirect rather than
+  // failing as an unknown key. The allowlist semantics are unchanged -- empty ignores everyone.
   "maxBatch": 2,                   // most agents a single provisioning request may create
   "allowedRegions": ["eastus2","northcentralus"],   // agents may ONLY be stood up in these Azure regions
   "defaultRegion": "eastus2",      // region offered by the panel when a request omits one

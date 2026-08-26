@@ -8,7 +8,6 @@ const { stripJsonc } = require('./jsonc');
 const DEFAULTS = {
   maxFleet: 6,
   a2aPairs: [],
-  telegramChatIds: [],
   protectedAgents: [],
   maxBatch: 2,
   allowedRegions: ['eastus2'],
@@ -128,12 +127,18 @@ const SETTABLE = {
   // off until an operator attests a specific pair, rather than on with a way to switch
   // it off. `none` clears.
   a2aPairs:       { file: 'a2aPairs',            kind: 'list', itemRe: /^[a-z][a-z0-9-]{1,23}>[a-z][a-z0-9-]{1,23}$/, itemDesc: 'directed pairs like from>to', allowEmpty: true },
-  // Telegram allowlist: the numeric chat ids that may command the fleet through the plane's
-  // bot. Empty (the default) means the Telegram lane ignores everyone -- the capability is
-  // off until an operator attests an id, never on with a way to switch it off. Unknown chats
-  // are ignored silently (a public bot must not confirm it exists) and logged once per id,
-  // which is how an operator learns their own id before attesting it. `none` clears.
-  telegramChatIds:{ file: 'telegramChatIds',     kind: 'list', itemRe: /^-?[0-9]{5,20}$/, itemDesc: 'numeric Telegram chat ids', allowEmpty: true },
+};
+
+// Keys that USED to live here and no longer do. A retired key must not read as an unknown
+// key: an operator who reaches for the old name gets told where it went, because silently
+// refusing an allowlist edit is how an allowlist ends up stale and nobody notices.
+const RETIRED = {
+  telegramChatIds:
+    'telegramChatIds now lives in the plane\'s aegis.config.json, not in policy.\n' +
+    '  It is a per-installation identifier and this file is committed, so publishing it here\n' +
+    '  would put a chat id in git. The allowlist semantics are unchanged: empty means the\n' +
+    '  Telegram lane ignores everyone, and an unknown chat is ignored silently and logged once.\n' +
+    '  Edit "telegramChatIds" in aegis.config.json on the plane and restart the unit.',
 };
 
 // Parse + shape-validate; throws with the ledgerable reason on bad input.
@@ -261,6 +266,7 @@ function setProtection({ name, on, attest, explicit }) {
 }
 
 function setPolicy({ key, value, attest, explicit }) {
+  if (RETIRED[key]) throw new Error(`policy set: "${key}" is no longer a policy key.\n  ${RETIRED[key]}`);
   const spec = SETTABLE[key];
   if (!spec) throw new Error(`policy set: unknown key "${key}" -- settable: ${Object.keys(SETTABLE).join(', ')}`);
   const p = resolvePolicyPath(explicit);
@@ -356,4 +362,4 @@ function setPolicy({ key, value, attest, explicit }) {
   return { path: p, key: spec.file, from: before, to: next, ledgered: rec.ts, syncOutcome, outcome };
 }
 
-module.exports = { DEFAULTS, resolvePolicyPath, loadPolicy, readProtection, checkProvision, showPolicy, setPolicy, setProtection, attestPhrase, ledger, syncVerdict };
+module.exports = { RETIRED, DEFAULTS, resolvePolicyPath, loadPolicy, readProtection, checkProvision, showPolicy, setPolicy, setProtection, attestPhrase, ledger, syncVerdict };
