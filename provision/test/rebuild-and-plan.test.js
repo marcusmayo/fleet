@@ -67,3 +67,32 @@ test('the payload carries no character that az --scripts would eat', () => {
   assert.ok(s.includes('{{.Names}}'), 'docker format strings survive the @file path');
   assert.ok(s.includes('"$AD/scaffold"'), 'double quotes survive it too');
 });
+
+// The agent test gate. The point is not that tests run -- it is WHEN: against the freshly
+// built image, with nothing serving yet, so a failing suite leaves the previous image up
+// instead of promoting a broken one and discovering it from the front door afterwards.
+test('rebuild: the agent test gate runs on the fresh image, BEFORE bootstrap', () => {
+  const s = rebuildScript({ profile: 'keel', head: '' });
+  assert.match(s, /4b\. agent tests/);
+  assert.match(s, /run-tests\.js/);
+  assert.match(s, /FATAL: agent tests failed/);
+  // ordering is the whole guarantee
+  const gate = s.indexOf('4b. agent tests');
+  const boot = s.indexOf('5. bootstrap');
+  const build = s.indexOf('4. build');
+  assert.ok(build > -1 && gate > build, 'gate must come after the build');
+  assert.ok(boot > -1 && gate < boot, 'gate must come BEFORE bootstrap or it is not a gate');
+});
+
+test('rebuild: an image without the runner says so loudly and does not silently pass', () => {
+  const s = rebuildScript({ profile: 'castor', head: '' });
+  assert.match(s, /NO TEST GATE/);
+  assert.match(s, /has not adopted the test lane/);
+  // the skip path must not be reachable by accident: it is guarded on the file existing
+  assert.match(s, /\[ -f \/app\/scripts\/run-tests\.js \]/);
+});
+
+test('rebuild: the test container is offline, so a suite cannot pass by reaching the network', () => {
+  const s = rebuildScript({ profile: 'keel', head: '' });
+  assert.match(s, /docker run --rm --network none/);
+});

@@ -50,6 +50,20 @@ function rebuildScript({ profile, head }) {
     'timeout 45m bash ./infra/scripts/build-image.sh 2>&1 | tail -12',
     'BRC=$?',
     '[ "$BRC" = 0 ] || { echo "FATAL: image build failed (rc=$BRC)"; exit 1; }',
+    // The agent's own tests, run against the image just built and BEFORE it is brought up.
+    // A throwaway container with no network, so a failure leaves the PREVIOUS image serving
+    // rather than promoting a broken one and finding out afterwards. Running from the image
+    // means the tests see what was actually assembled: vendored core, tools, node_modules.
+    'echo "=== 4b. agent tests (fresh image, nothing serving yet) ==="',
+    'if sudo docker run --rm --entrypoint sh "${PROFILE}:latest" -c "[ -f /app/scripts/run-tests.js ]"; then',
+    '  TLOG=$(mktemp)',
+    '  sudo docker run --rm --network none "${PROFILE}:latest" node /app/scripts/run-tests.js /app > "$TLOG" 2>&1',
+    '  TRC=$?',
+    '  tail -30 "$TLOG"; rm -f "$TLOG"',
+    '  [ "$TRC" = 0 ] || { echo "FATAL: agent tests failed (rc=$TRC) -- the previous image is still serving"; exit 1; }',
+    'else',
+    '  echo "NO TEST GATE: /app/scripts/run-tests.js absent from the image -- this agent has not adopted the test lane; rebuild continues"',
+    'fi',
     'echo "=== 5. bootstrap ==="',
     'sudo -u agentadmin bash "$AD/infra/scripts/bootstrap.sh" 2>&1 | tail -20',
     'echo "=== 6. read back ==="',

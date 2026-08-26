@@ -322,6 +322,12 @@ function listJobs(cwd, limit) {
     .map(j => ({
       jobId: j.jobId, route: j.route, actor: j.actor, onBehalfOf: j.onBehalfOf || null,
       status: j.status, ok: j.ok,
+      // What it actually ran with. persistJob has always written argv to disk; the read
+      // path dropped it, so the one fact a reader most needs -- WHICH arguments this skill
+      // received -- was recorded and then invisible. That mattered little while argv was
+      // fixed per route; with declared params it is the whole difference between two calls
+      // to the same route, and the only place those values survive.
+      args: Array.isArray(j.args) ? j.args : [],
       exitCode: j.exitCode, timedOut: j.timedOut, startedAt: j.startedAt,
       endedAt: j.endedAt, durationMs: j.durationMs,
     }));

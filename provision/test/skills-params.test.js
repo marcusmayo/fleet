@@ -152,3 +152,38 @@ test('skills contract: a nonsense value is a boot error, never a silent default'
       /contract must be a positive integer/, 'contract: ' + JSON.stringify(bad));
   }
 });
+
+// ---- the job lane reports what a skill ran with -----------------------------------
+// persistJob has always written argv to disk. listJobs projected a fixed field set that
+// omitted it, so /skill-jobs could say a route ran but never with which arguments. With
+// declared params that is the only difference between two calls to the same route.
+
+test('skill jobs: the listing carries the argv the skill ran with', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'jobs-'));
+  const dir = path.join(cwd, 'state', 'skill-jobs');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'j1.json'), JSON.stringify({
+    jobId: 'j1', route: '/run-find', args: ['tools/find.py', 'billing'],
+    actor: { src: 'cf-access', id: 'someone@example.com' },
+    status: 'done', ok: true, exitCode: 0, timedOut: false,
+    startedAt: '2026-08-25T02:00:00.000Z', endedAt: '2026-08-25T02:00:01.000Z', durationMs: 1000,
+  }));
+  const [row] = skills.listJobs(cwd, 10);
+  assert.strictEqual(row.route, '/run-find');
+  assert.deepStrictEqual(row.args, ['tools/find.py', 'billing']);
+  assert.strictEqual(row.actor.id, 'someone@example.com');
+  assert.strictEqual(row.ok, true);
+});
+
+test('skill jobs: a record written before argv was projected still reads, as an empty list', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'jobs-'));
+  const dir = path.join(cwd, 'state', 'skill-jobs');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'j0.json'), JSON.stringify({
+    jobId: 'j0', route: '/queue', status: 'done', ok: true, startedAt: '2026-08-25T01:00:00.000Z',
+  }));
+  const [row] = skills.listJobs(cwd, 10);
+  assert.deepStrictEqual(row.args, [], 'absent argv reads as [] rather than undefined');
+});
