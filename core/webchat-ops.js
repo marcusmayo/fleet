@@ -57,7 +57,13 @@ function safeUploadName(n) {
 // reached -- which is how a 906 KB photo came back "file too large for import (50mb limit)":
 // base64 inflates by a third, so a 1mb global cap is really a ~786 KB file cap.
 const BIG_JSON_ROUTES = ['/files/stage'];
-const BIG_JSON_LIMIT = '50mb';
+// The FILE limit is the number an operator is told and the number intake enforces
+// (scripts/intake.js MAX_BYTES). The BODY limit must be larger, because the body is
+// base64 -- 4 bytes carried per 3 bytes of file -- plus a small JSON envelope. Deriving
+// one from the other is the point: typing '50mb' in both places is how a 50 MB file came
+// back "too large (50mb limit)" while the limit it failed was never the one advertised.
+const MAX_IMPORT_FILE_MB = 50;
+const BIG_JSON_LIMIT = (Math.ceil(MAX_IMPORT_FILE_MB * 4 / 3) + 5) + 'mb';
 // Exact match or a path segment beneath it; never a bare prefix, so /files/staged-elsewhere
 // cannot inherit the large cap by sharing a few characters.
 function usesBigJson(pathname) {
@@ -236,7 +242,7 @@ function mountChatOps(app, opts) {
   });
   // Oversize uploads must fail as JSON, not Express's HTML error page (the client parses JSON).
   app.use('/files', (err, req, res, next) => {
-    if (err && (err.type === 'entity.too.large' || err.status === 413)) return res.status(413).json({ ok: false, error: 'file too large for import (50mb limit)' });
+    if (err && (err.type === 'entity.too.large' || err.status === 413)) return res.status(413).json({ ok: false, error: 'file too large for import (' + MAX_IMPORT_FILE_MB + ' MB limit)' });
     return next(err);
   });
   // ---- A2A delivery: a peer agent's message, relayed by the control plane ----------
@@ -508,4 +514,4 @@ function mountChatOps(app, opts) {
   });
 }
 
-module.exports = { mountChatOps, modelLabel, MODEL_LABELS, BIG_JSON_ROUTES, BIG_JSON_LIMIT, usesBigJson, safeUploadName, NAME_MAX };
+module.exports = { mountChatOps, modelLabel, MODEL_LABELS, BIG_JSON_ROUTES, BIG_JSON_LIMIT, MAX_IMPORT_FILE_MB, usesBigJson, safeUploadName, NAME_MAX };
