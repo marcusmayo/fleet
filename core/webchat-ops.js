@@ -214,13 +214,20 @@ function mountChatOps(app, opts) {
   // agent (system/agent.yaml stage_dest: keel exports/inbound, castor inbox/drop).
   // Zero-dep read of the one flat key we need; a broken/missing agent.yaml makes
   // PROCESS refuse (fail-closed) rather than silently misroute into a dir nothing watches.
-  let stageYamlErr = null, STAGE_DEST_REL = 'inbox', IMPORT_BTN = true;
+  let stageYamlErr = null, STAGE_DEST_REL = 'inbox', IMPORT_BTN = true, INTAKE_CMD = null, QUARANTINE_REL = null;
   try {
     const rawY = fs2.readFileSync(path.join(cwd, 'system', 'agent.yaml'), 'utf8');
     const mY = rawY.match(/^stage_dest:\s*([^\s#]+)/m);
     if (mY) STAGE_DEST_REL = mY[1];
     const mIB = rawY.match(/^import_button:\s*(\S+)/m);
     if (mIB) IMPORT_BTN = mIB[1] !== 'false';
+    // Two optional keys. Declared: PROCESS runs the profile's intake and reports the verdict.
+    // Absent: PROCESS behaves exactly as before -- move, report the move. A profile whose
+    // pipeline has no classifier is not broken by this, it just has no verdict to give.
+    const mIC = rawY.match(/^intake_cmd:\s*(.+?)\s*$/m);
+    if (mIC) INTAKE_CMD = mIC[1];
+    const mQD = rawY.match(/^quarantine_dir:\s*([^\s#]+)/m);
+    if (mQD) QUARANTINE_REL = mQD[1];
   } catch (e) { stageYamlErr = 'cannot read system/agent.yaml: ' + e.message; }
   const STAGE_DIR = path.join(stateDir, 'staging');
   const STAGE_DEST = path.join(cwd, STAGE_DEST_REL);
@@ -317,6 +324,32 @@ function mountChatOps(app, opts) {
     res.json({ ok: true, name, dest, bytes: Buffer.byteLength(text, 'utf8'), textSha256: sha });
   });
 
+  // Runs the declared intake command, then reads the OUTCOME OFF THE FILESYSTEM rather than
+  // parsing stdout: a classifier's exit code and its prose are both weaker evidence than where
+  // it actually put the file. Quarantined items land as <stamp>_<safeName> with a .reason.txt
+  // sidecar, so the match is on the suffix, never the whole name.
+  function classify(name, movedTo) {
+    if (!INTAKE_CMD) return { verdict: 'moved', dest: STAGE_DEST_REL, message: name + ' -> ' + STAGE_DEST_REL + ' — the profile pipeline takes it from here' };
+    try {
+      require('node:child_process').execSync(INTAKE_CMD, { cwd, timeout: 60000, stdio: 'ignore' });
+    } catch (e) {
+      // A timeout is not a failure of the file; it is a bound on how long PROCESS may block.
+      if (e && e.code === 'ETIMEDOUT') return { verdict: 'pending', dest: STAGE_DEST_REL, message: name + ' -> ' + STAGE_DEST_REL + ' — still being processed; the outcome will be reported on the next turn' };
+    }
+    if (QUARANTINE_REL) {
+      const qdir = path.join(cwd, QUARANTINE_REL);
+      let hit = null;
+      try { hit = (fs2.readdirSync(qdir) || []).filter((f) => !f.endsWith('.reason.txt') && f.endsWith('_' + name)).sort().pop() || null; } catch { /* no quarantine dir yet */ }
+      if (hit) {
+        let reason = 'refused at intake';
+        try { reason = String(fs2.readFileSync(path.join(qdir, hit + '.reason.txt'), 'utf8')).split('\n')[0].replace(/^refused:\s*/, '').trim() || reason; } catch { /* sidecar missing */ }
+        return { verdict: 'quarantined', reason, message: name + ' was REFUSED at intake: ' + reason + ' — it is in ' + QUARANTINE_REL + ', not in the knowledge base' };
+      }
+    }
+    if (fs2.existsSync(movedTo)) return { verdict: 'pending', dest: STAGE_DEST_REL, message: name + ' -> ' + STAGE_DEST_REL + ' — not yet classified; the outcome will be reported on the next turn' };
+    return { verdict: 'admitted', dest: STAGE_DEST_REL, message: name + ' admitted' };
+  }
+
   app.post('/files/process', requireAuth, (req, res) => {
     if (stageYamlErr) return res.status(500).json({ ok: false, error: stageYamlErr + ' — refusing to move (stage_dest unknown)' });
     const name = safeFile((req.body || {}).name);
@@ -333,7 +366,14 @@ function mountChatOps(app, opts) {
       return res.status(500).json({ ok: false, error: 'process failed: ' + e.message });
     }
     audit({ event: 'file-process', name, dest: STAGE_DEST_REL });
-    res.json({ ok: true, name, message: name + ' -> ' + STAGE_DEST_REL + ' — the profile pipeline takes it from here' });
+    // The move used to BE the answer, and it never was: classification happens later, in the
+    // sweep, and a refusal was recorded where no operator would see it. Eight files went in,
+    // six came back, and the operator was the detection mechanism. Run the profile's own
+    // classifier now, bounded, and report what it decided. A slow file (OCR, vision) hits the
+    // timeout and reports 'pending' -- honestly -- and the next-turn notice carries it instead.
+    const verdict = classify(name, dst);
+    audit({ event: 'file-verdict', name, verdict: verdict.verdict, reason: verdict.reason || null });
+    res.json({ ok: true, name, ...verdict });
   });
 
   // ---- background / inlay -----------------------------------------------------------------
