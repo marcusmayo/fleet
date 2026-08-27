@@ -17,7 +17,7 @@
   // reconcile and a policy change on origin shows as UPDATE PENDING rather than sitting
   // invisible. The panel can REQUEST a protection change; only `fleetctl policy set` plus a
   // commit decides one.
-  "protectedAgents": ["smalt"],
+  "protectedAgents": [],
   // Agent-to-agent relay allowlist -- DIRECTED pairs "from>to". Empty means no relay
   // is possible; the capability does not exist until an operator attests a pair.
   // Aegis is always the mediator: no agent has a network path to another.
