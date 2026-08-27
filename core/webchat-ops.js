@@ -189,9 +189,16 @@ function mountChatOps(app, opts) {
     const b = req.body || {};
     const cur = readProt();
     if (typeof b.protected === 'boolean') {
-      const requested = (cur.requested === (b.protected ? 'protect' : 'unprotect')) ? null : cur.requested;
-      const next = { protected: b.protected, requested };
-      writeProt(next); audit({ event: 'protection-mirror', protected: b.protected });
+      // A mirror write is Aegis ANSWERING, so it settles a pending request -- including when the
+      // answer is no. The old form only cleared a request the mirror AGREED with, and the panel
+      // only mirrored when it DISAGREED, so a request that would never be honoured had no path to
+      // closure: an agent could carry "protect requested" indefinitely. Whether the answer matches
+      // the ask is not the agent's business; that an answer arrived is.
+      const next = { protected: b.protected, requested: null };
+      const changed = cur.protected !== next.protected || cur.requested !== next.requested;
+      // The panel now mirrors on every poll while a request is open, so a no-op write must touch
+      // neither the disk nor the audit log -- a settled state would emit one record per refresh.
+      if (changed) { writeProt(next); audit({ event: 'protection-mirror', protected: b.protected, cleared: cur.requested || null }); }
       return res.json({ ok: true, ...next });
     }
     if (b.request === 'protect' || b.request === 'unprotect') {
