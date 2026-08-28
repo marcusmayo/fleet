@@ -12,6 +12,7 @@
 //   5 service token  6 DNS  7 tunnel  : now unreferenced / connector dead.
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { c, runCapture, findFleetRoot } = require('./util');
 const { loadContract } = require('./contract');
 const { derive } = require('./derive');
