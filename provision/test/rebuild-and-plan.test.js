@@ -87,7 +87,12 @@ test('rebuild: the agent test gate runs on the fresh image, BEFORE bootstrap', (
 test('rebuild: an image without the runner says so loudly and does not silently pass', () => {
   const s = rebuildScript({ profile: 'castor', head: '' });
   assert.match(s, /NO TEST GATE/);
-  assert.match(s, /has not adopted the test lane/);
+  // Pin the BEHAVIOUR, not the sentence: the skip must say nothing was verified, and it must
+  // say so again in the summary, because a warning 150 lines up is not a warning. The previous
+  // form asserted one specific phrase and broke when the wording was made louder.
+  assert.match(s, /NOTHING verified this build/);
+  assert.match(s, /NOGATE=1/);
+  assert.match(s, /NOGATE:-0.* = 1 \] && echo "REMINDER/);
   // the skip path must not be reachable by accident: it is guarded on the file existing
   assert.match(s, /\[ -f \/app\/scripts\/run-tests\.js \]/);
 });
