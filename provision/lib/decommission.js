@@ -17,6 +17,8 @@ const { loadContract } = require('./contract');
 const { derive } = require('./derive');
 const cf = require('./cfapi');
 const cfg = require('./aegisconfig');
+const { loadAegisContract } = require('./aegis-contract');
+const { runOnVm, stdoutOf } = require('./vmrun');
 const { runDeregister } = require('./register');
 
 const env = (n) => (process.env[n] || '').trim();
@@ -27,6 +29,72 @@ const env = (n) => (process.env[n] || '').trim();
 // that had neither, printed "not registered", skipped the surface and said complete while the
 // registry still held the agent. Unresolvable is its own state, reported and counted as a failed
 // surface -- never "not registered". Pure read; exported for tests.
+// THE HOSTED PLANE'S REGISTRY -----------------------------------------------------------
+// resolveConfigPath finds a registry on THIS machine. That was the whole truth when the console
+// ran on the workstation; with a hosted plane there are two registries and the local one is not
+// the one serving the panel. A teardown that cleaned only the local file printed a tick and left
+// the agent listed in the plane -- a resolved-but-wrong registry counted as success, which is
+// worse than an unresolved one, because an unresolved one refuses.
+//
+// The plane is found by its own contract (rg-<n> / <n>-vm) and reached the way every other
+// hardened-VM lane reaches it: the Azure guest agent, no network path, no SSH. Absent contract
+// = no hosted plane = the surface is genuinely absent, not skipped in ignorance.
+const PLANE_REGISTRY = '/home/aegisadmin/aegis/aegis.config.json';
+const PLANE_FLEET = '/home/aegisadmin/agent-fleet-iac';
+
+function planeContractPath() {
+  const root = findFleetRoot();
+  if (!root) return null;
+  const p = path.join(root, 'agents', 'aegis.contract.jsonc');
+  return fs.existsSync(p) ? p : null;
+}
+
+// -> { present: true|false|null, rg, vm, name, err } -- null means could not read, which is
+// reported as unreadable and NEVER as absent: "no answer" is not "not there".
+function planeState(agentName) {
+  const cp = planeContractPath();
+  if (!cp) return { present: false, absent: true };
+  let v;
+  try {
+    const res = loadAegisContract(cp);
+    if (!res.ok) return { present: null, err: 'plane contract invalid: ' + (res.errors || []).join('; ') };
+    v = res.value;
+  } catch (e) { return { present: null, err: 'plane contract unreadable: ' + e.message }; }
+  const script = ['#!/usr/bin/env bash', 'set -o pipefail',
+    'if [ ! -f ' + PLANE_REGISTRY + ' ]; then echo NOREGISTRY; exit 0; fi',
+    'sudo -u aegisadmin node -e \'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));' +
+      'console.log((c.agents||[]).some(a=>a&&a.name===process.argv[2])?"PRESENT":"ABSENT")}catch(e){console.log("UNREADABLE:"+e.message)}\' ' +
+      PLANE_REGISTRY + ' ' + JSON.stringify(agentName),
+  ].join('\n') + '\n';
+  const r = runOnVm(v.resourceGroup, v.vmName, script, 'plane-registry');
+  if (!r.ok) return { present: null, rg: v.resourceGroup, vm: v.vmName, name: v.name, err: 'plane unreachable: ' + r.err };
+  const out = stdoutOf(r.msg);
+  const base = { rg: v.resourceGroup, vm: v.vmName, name: v.name };
+  if (/\bPRESENT\b/.test(out)) return { ...base, present: true };
+  if (/\bABSENT\b/.test(out) || /NOREGISTRY/.test(out)) return { ...base, present: false };
+  return { ...base, present: null, err: 'plane registry unreadable: ' + out.trim().split('\n').pop() };
+}
+
+// Deregister on the plane, then READ THE REGISTRY BACK. An exit code says the command ran; only
+// the file says the agent is gone.
+function planeDeregister(ps, agentName) {
+  const script = ['#!/usr/bin/env bash', 'set -o pipefail',
+    'cd ' + PLANE_FLEET + ' || { echo "NOFLEET"; exit 1; }',
+    'sudo -u aegisadmin -H node ' + PLANE_FLEET + '/provision/bin/fleetctl.js deregister ' + JSON.stringify(agentName) +
+      ' --aegis-config ' + PLANE_REGISTRY + ' 2>&1 | tail -5',
+    'echo "--- read back ---"',
+    'sudo -u aegisadmin node -e \'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));' +
+      'console.log((c.agents||[]).some(a=>a&&a.name===process.argv[2])?"STILL-PRESENT":"GONE")}catch(e){console.log("UNREADABLE:"+e.message)}\' ' +
+      PLANE_REGISTRY + ' ' + JSON.stringify(agentName),
+  ].join('\n') + '\n';
+  const r = runOnVm(ps.rg, ps.vm, script, 'plane-dereg');
+  if (!r.ok) throw new Error('plane unreachable: ' + r.err);
+  const out = stdoutOf(r.msg);
+  if (/\bGONE\b/.test(out)) return;
+  if (/STILL-PRESENT/.test(out)) throw new Error('deregister ran but the plane registry still lists the agent');
+  throw new Error('could not verify the plane registry after deregister: ' + out.trim().split('\n').pop());
+}
+
 // -> { aegisPath, aegisResolved, aegis, aegisError? }
 function registryState(aegisConfig, name) {
   const reg = cfg.resolveConfigPath(aegisConfig, findFleetRoot());
@@ -140,6 +208,7 @@ async function discover(file, d, accountId, cfToken, aegisConfig) {
   } catch { /* unreadable -> not listed; RG delete still proceeds */ }
 
   Object.assign(s, registryState(aegisConfig, name));
+  s.plane = planeState(name);
 
   s.localFile = fs.existsSync(file) ? file : null;
   return s;
@@ -170,6 +239,12 @@ function printPlan(s) {
   console.log(`  1 Aegis registry     ${s.aegisResolved
     ? (s.aegis ? c.yellow('DEREGISTER') + c.dim('  ' + s.aegisPath) : c.dim('not registered  ' + s.aegisPath))
     : c.red('UNRESOLVED') + c.dim('  no aegis.config.json (' + (s.aegisError || 'set $AEGIS_CONFIG or pass --aegis-config') + ') -- counts as a failed surface at --go')}`);
+  const pl = s.plane || {};
+  console.log(`  1b Plane registry    ${pl.absent
+    ? c.dim('no hosted plane (no agents/aegis.contract.jsonc) -- nothing to deregister')
+    : pl.present === true ? c.yellow('DEREGISTER') + c.dim('  ' + pl.rg + ' / ' + pl.vm + ':' + PLANE_REGISTRY)
+    : pl.present === false ? c.dim('not registered  ' + (pl.vm || 'plane'))
+    : c.red('UNREADABLE') + c.dim('  ' + (pl.err || 'could not read the plane registry') + ' -- counts as a failed surface at --go')}`);
   console.log(`  2 local config       ${s.localFile ? del(s.localFile) : gone()}`);
   console.log(`  3 Azure RG           ${s.rg ? del(s.rgName) : gone(s.rgName)}`);
   console.log(`  4 CF Access app      ${s.app ? del(s.app.id) : gone()}`);
@@ -207,6 +282,11 @@ async function execute(file, d, accountId, cfToken, aegisConfig, s) {
   if (!s.aegisResolved) fail('Aegis registry', new Error('no aegis.config.json resolved -- set $AEGIS_CONFIG or pass --aegis-config, then re-run to deregister'));
   else if (s.aegis) { try { runDeregister(file, { aegisConfig: s.aegisPath }); ok('Aegis: deregistered from ' + s.aegisPath); } catch (e) { fail('Aegis deregister', e); } }
   else skip('Aegis registry (' + s.aegisPath + ')');
+  const pl2 = s.plane || {};
+  if (pl2.absent) skip('Plane registry (no hosted plane)');
+  else if (pl2.present === null) fail('Plane registry', new Error(pl2.err || 'could not read the plane registry -- re-run when the plane is reachable'));
+  else if (pl2.present === true) { try { planeDeregister(pl2, s.name); ok('Plane: deregistered on ' + pl2.vm + ' (registry re-read, agent gone)'); } catch (e) { fail('Plane deregister', e); } }
+  else skip('Plane registry (' + (pl2.vm || 'plane') + ')');
 
   // 2. local contract file
   if (s.localFile) { try { fs.unlinkSync(s.localFile); ok(`local config: deleted ${s.localFile}`); } catch (e) { fail('local config delete', e); } }
@@ -334,7 +414,7 @@ async function runDecommission(file, opts = {}) {
   s.protection = protection;
   printPlan(s);
 
-  const anything = s.aegis || s.localFile || s.rg || s.app || (s.tokens && s.tokens.length) || s.dns || s.tunnel || s.appSsh || s.dnsSsh || (s.policies && s.policies.length);
+  const anything = (s.plane && (s.plane.present === true || s.plane.present === null)) || s.aegis || s.localFile || s.rg || s.app || (s.tokens && s.tokens.length) || s.dns || s.tunnel || s.appSsh || s.dnsSsh || (s.policies && s.policies.length);
   if (!anything) { console.log(c.green('\nNothing to decommission — every surface is already absent.')); return 0; }
 
   if (!opts.go) {
