@@ -142,6 +142,34 @@ const RETIRED = {
 };
 
 // Parse + shape-validate; throws with the ledgerable reason on bad input.
+// Read the lock back rather than trusting the mutation's exit code. `az lock delete` on a
+// lock that does not exist exits 0, so a delete that deleted nothing still reported "ok:
+// unlocked rg-<n>" and the ledger recorded an unlock that never happened. The same weakness
+// applied to "ok: locked". true = present, false = absent, null = could not tell (reported as
+// unverified, never as success).
+function lockPresent(name) {
+  const r = runAz(['lock', 'list', '-g', 'rg-' + name, '--query', "[?name=='fleet-protect'].name", '-o', 'tsv']);
+  if (r.status !== 0) return null;
+  return /fleet-protect/.test(r.out);
+}
+
+// Coherence between the policy file and the structure it is mirrored into. protectedAgents is
+// the gate; the CanNotDelete lock is the structural layer. They can diverge silently -- a lock
+// was deleted by the control plane while the policy still named the agent, and nothing surfaced
+// it for eight days. `policy show` now asks Azure instead of assuming.
+function lockCoherence(protectedAgents) {
+  const names = Array.isArray(protectedAgents) ? protectedAgents : [];
+  if (!names.length) return ['  lock mirror: nothing protected, nothing to mirror'];
+  const out = [];
+  for (const n of names) {
+    const seen = lockPresent(n);
+    out.push(seen === true ? `    ${n}: lock present`
+      : seen === false ? `    ${n}: DIVERGED -- policy protects it, rg-${n} has no fleet-protect lock`
+      : `    ${n}: unreadable -- could not query locks on rg-${n}`);
+  }
+  return ['  lock mirror (policy vs azure):', ...out];
+}
+
 function coerce(key, spec, value) {
   if (spec.kind === 'int') {
     const n = Number(value);
@@ -202,6 +230,7 @@ function showPolicy(explicit) {
   const pol = loadPolicy(explicit);
   const lines = [`policy source: ${pol.source}`];
   for (const k of Object.keys(DEFAULTS)) lines.push(`  ${k}: ${JSON.stringify(pol[k])}`);
+  for (const l of lockCoherence(pol.protectedAgents)) lines.push(l);
   const ap = pol.source.endsWith('.jsonc') ? auditPath(pol.source) : null;
   if (ap && fs.existsSync(ap)) {
     const tail = fs.readFileSync(ap, 'utf8').trim().split('\n').slice(-3);
@@ -322,11 +351,19 @@ function setPolicy({ key, value, attest, explicit }) {
     const notes = [];
     for (const n of added) {
       const r = runAz(['lock', 'create', '--name', 'fleet-protect', '-g', 'rg-' + n, '--lock-type', 'CanNotDelete', '-o', 'none']);
-      notes.push(r.status === 0 ? `locked rg-${n}` : `lock rg-${n} failed: ${r.err}`);
+      if (r.status !== 0) { notes.push(`lock rg-${n} failed: ${r.err}`); continue; }
+      const seen = lockPresent(n);
+      notes.push(seen === true ? `locked rg-${n}` : seen === false
+        ? `lock rg-${n} failed: az reported success but no fleet-protect lock is present`
+        : `lock rg-${n} unverified: could not read the lock back`);
     }
     for (const n of removed) {
       const r = runAz(['lock', 'delete', '--name', 'fleet-protect', '-g', 'rg-' + n]);
-      notes.push(r.status === 0 ? `unlocked rg-${n}` : `unlock rg-${n} failed: ${r.err}`);
+      if (r.status !== 0) { notes.push(`unlock rg-${n} failed: ${r.err}`); continue; }
+      const seen = lockPresent(n);
+      notes.push(seen === false ? `unlocked rg-${n}` : seen === true
+        ? `unlock rg-${n} failed: az reported success but the lock is still present`
+        : `unlock rg-${n} unverified: could not read the lock back`);
     }
     if (notes.length) syncOutcome = (notes.some((n) => /failed/.test(n)) ? '' : 'ok: ') + notes.join('; ');
   }
