@@ -473,12 +473,67 @@ function assertContract(doc) {
   return want;
 }
 
+// The profile's skill set = what it TAKES from the shared inventory + what it defines itself.
+//
+// Nine governance definitions were carried byte-identical in two profiles' skills.yaml. Two
+// copies of one definition is one definition that can drift, and nothing would have said so.
+// They now live once, in fleet-core, vendored to scripts/skills-inventory.yaml and hash-verified
+// by verify-core like any other core module -- so a profile cannot quietly hold a stale copy.
+//
+// A profile takes by NAMING routes; it cannot edit what it takes. There is no override, because
+// an override is how a shared definition stops being shared: a profile needing different
+// behaviour writes its own skill under a different route. A route that appears twice -- taken and
+// defined, or defined twice -- THROWS at boot rather than resolving to whichever won, because
+// "which copy is running" is exactly the question this file exists to make unaskable.
+// Pure, for the same reason assertContract is: provision/ has no js-yaml, so the fleet suite can
+// only pin logic that takes PARSED input. `invDoc` may be null -- a profile that takes nothing
+// never needs the inventory to exist.
+function composeSkills(doc, invDoc) {
+  if (!doc || !Array.isArray(doc.skills)) throw new Error('skills.yaml: expected top-level skills: [ ... ]');
+  assertContract(doc);
+  const want = doc.inventory === undefined ? [] : doc.inventory;
+  if (!Array.isArray(want)) throw new Error('skills.yaml: inventory must be a list of routes');
+  let taken = [];
+  if (want.length) {
+    if (!invDoc || !Array.isArray(invDoc.skills)) throw new Error('skills-inventory.yaml: expected top-level skills: [ ... ]');
+    assertContract(invDoc);
+    const byRoute = new Map(invDoc.skills.map((s) => [s && s.route, s]));
+    taken = want.map((r) => {
+      const hit = byRoute.get(r);
+      if (!hit) {
+        throw new Error('skills.yaml: inventory names ' + JSON.stringify(r)
+          + ', which the vendored inventory does not define. It offers: '
+          + invDoc.skills.map((s) => s && s.route).join(', '));
+      }
+      return hit;
+    });
+  }
+  const all = taken.concat(doc.skills);
+  const seen = new Set();
+  for (const s of all) {
+    const r = s && s.route;
+    if (seen.has(r)) {
+      throw new Error('skills.yaml: route ' + r + ' appears twice -- taken from the inventory AND '
+        + 'defined locally, or defined twice. Take it or define it, not both.');
+    }
+    seen.add(r);
+  }
+  return all;
+}
+
 function loadSkills(cwd) {
   const yaml = require('js-yaml');
   const doc = yaml.load(fs.readFileSync(path.join(cwd, 'system', 'skills.yaml'), 'utf8'));
-  if (!doc || !Array.isArray(doc.skills)) throw new Error('skills.yaml: expected top-level skills: [ ... ]');
-  assertContract(doc);
-  return doc.skills;
+  let invDoc = null;
+  const wants = doc && Array.isArray(doc.inventory) && doc.inventory.length;
+  if (wants) {
+    const p = path.join(cwd, 'scripts', 'skills-inventory.yaml');
+    let raw;
+    try { raw = fs.readFileSync(p, 'utf8'); }
+    catch { throw new Error('skills.yaml names inventory routes but ' + p + ' is absent -- vendor fleet-core (core/sync-core.sh) and rebuild'); }
+    invDoc = yaml.load(raw);
+  }
+  return composeSkills(doc, invDoc);
 }
 
 // Mount every entry. Fails LOUD at boot (throws) on a malformed entry or an unknown
@@ -688,7 +743,7 @@ function refreshRecordsAsync(cwd, cb) {
 }
 
 module.exports = {
-  validateParams, resolveParams, assertContract, SKILLS_CONTRACT_MAX,   // exported for the fleet suite; not used by agents directly
+  validateParams, resolveParams, assertContract, composeSkills, SKILLS_CONTRACT_MAX,   // exported for the fleet suite; not used by agents directly
   mountSkills, loadSkills, runSkillSpawn, refreshRecords, refreshRecordsAsync,
   chatSkill, parseChatSkill,          // the chat lane: a declared route runs, it does not reach the model
   startSkillJob, getJob, listJobs,
