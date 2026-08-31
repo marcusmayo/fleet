@@ -12,7 +12,7 @@ const { c } = require('../lib/util');
 const HELP = `fleetctl — agent-fleet provisioning
 
 Usage:
-  fleetctl check    <contract.agent.jsonc> [--contract-only] [--live [--logs]] [--aegis-config <path>]
+  fleetctl check    <contract.agent.jsonc> [--contract-only] [--live [--logs] [--expect <sha>]] [--aegis-config <path>]
   fleetctl plan     <contract.agent.jsonc> [--require-whatif]
   fleetctl up       <contract.agent.jsonc> [--go] [--aegis-config <path>]
   fleetctl register <contract.agent.jsonc> [--aegis-config <path>]
@@ -44,6 +44,7 @@ Commands:
                               /health/liveliness through the tunnel (HTTP 200) using
                               the service token stored in aegis.config.json.
             --require-live    exit non-zero if the live probe can't run (for CI).
+            --expect <sha>    with --live: FAIL unless the agent reports running that commit
             --logs            with --live: when the probe is not 200, read the VM itself
                               through run-command (cloud-init state, image-build verdict,
                               retry log, timers, first-boot marker, containers) and print it,
@@ -144,7 +145,7 @@ check/plan make no changes. register writes only to the local (gitignored) confi
 // bare flag and its value is read as a positional -- which is how `backup get --out <path>`
 // downloaded to the working directory while reporting success. Add the flag here the same
 // commit it is introduced, or --policy=x works and --policy x does not.
-const VALUED = new Set(['--aegis-config', '--policy', '--out', '--as', '--prefix', '--priority', '--tier', '--blob', '--head', '--attest']);
+const VALUED = new Set(['--aegis-config', '--policy', '--out', '--as', '--prefix', '--priority', '--tier', '--blob', '--head', '--attest', '--expect']);
 
 function parseArgs(rest) {
   const flags = new Set();
@@ -176,7 +177,7 @@ async function main(argv) {
 
   if (cmd === 'check') {
     if (!file) { console.error(c.red('check: missing <contract.agent.jsonc>')); return 2; }
-    if (flags.has('--live')) return runCheckLive(file, { aegisConfig, requireLive: flags.has('--require-live'), logs: flags.has('--logs') });
+    if (flags.has('--live')) return runCheckLive(file, { aegisConfig, requireLive: flags.has('--require-live'), logs: flags.has('--logs'), expect: opts.expect });
     return runCheck(file, { contractOnly: flags.has('--contract-only') });
   }
   if (cmd === 'plan') {

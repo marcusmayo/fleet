@@ -77,8 +77,22 @@ function rebuildScript({ profile, head }) {
     'sudo docker exec "${PROFILE}-webchat" node -e \'try{const a=require("/app/scripts/auth");console.log("agent name: "+(a.readAgentName?a.readAgentName("/app"):"(no readAgentName)"))}catch(e){console.log("(auth not loadable: "+e.message+")")}\' 2>&1 | head -3',
     // What commit is actually running -- read from the image, not inferred from what we asked
     // for. An image built before the stamp existed says so rather than pretending.
-    'echo "build commit: $(sudo docker exec "${PROFILE}-webchat" sh -c "cat /app/system/build-commit 2>/dev/null || echo pre-provenance-image")"',
-    'echo "asked for    : ${WANT:-(whatever the branch pulled)}"',
+    'STAMP="$(sudo docker exec "${PROFILE}-webchat" sh -c "cat /app/system/build-commit 2>/dev/null || echo pre-provenance-image")"',
+    'echo "build commit: $STAMP"',
+    'echo "asked for   : ${WANT:-(whatever the branch pulled)}"',
+    // The gate. Printing the two side by side leaves a human to compare them, which is how a
+    // rebuild reports success while serving something else. Short sha vs full sha, so prefix
+    // either way; a -dirty image never matches, because it is not the commit it names.
+    'case "$STAMP" in *-dirty) echo "!!!! this image was built from a tree with UNCOMMITTED changes -- it is not the commit it names" ;; esac',
+    'if [ -n "$WANT" ] && [ "$STAMP" != pre-provenance-image ]; then',
+    '  BARE="${STAMP%-dirty}"',
+    '  case "$BARE" in "$WANT"*) OKC=1 ;; *) case "$WANT" in "$BARE"*) OKC=1 ;; *) OKC=0 ;; esac ;; esac',
+    '  [ "$STAMP" = "$BARE" ] || OKC=0',
+    '  [ "$OKC" = 1 ] || { echo "FATAL: the running agent reports $STAMP but the rebuild asked for $WANT -- it is not serving what it was told to build"; exit 1; }',
+    '  echo "provenance  : running commit matches the one asked for"',
+    'elif [ "$STAMP" = pre-provenance-image ]; then',
+    '  echo "NOTE: this image predates the build stamp -- it cannot state its own commit"',
+    'fi',
     'curl -s -o /dev/null -w \'local health: %{http_code}\\n\' http://127.0.0.1:8443/health/liveliness 2>/dev/null || echo "local probe failed (the real check is fleetctl check --live)"',
     'echo "=== rebuild complete: ${PROFILE} at $HEAD ==="',
   ];

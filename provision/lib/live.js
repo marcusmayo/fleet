@@ -5,14 +5,14 @@ const { loadContract } = require('./contract');
 const { derive } = require('./derive');
 const cfg = require('./aegisconfig');
 
-// GET https://<host>/health/liveliness with the Cloudflare Access service-token
-// headers. Never throws; resolves { ok, status, body } or { ok:false, error }.
-function probe(host, clientId, clientSecret) {
+// GET https://<host><path> with the Cloudflare Access service-token headers.
+// Never throws; resolves { ok, status, body } or { ok:false, error }.
+function probe(host, clientId, clientSecret, path = '/health/liveliness') {
   return new Promise((resolve) => {
     const req = https.request({
       method: 'GET',
       hostname: host,
-      path: '/health/liveliness',
+      path,
       timeout: 15000,
       headers: {
         'CF-Access-Client-Id': clientId,
@@ -97,7 +97,7 @@ async function runCheckLive(file, opts = {}) {
   }
   if (r.status === 200) {
     console.log(c.green(`\ncheck --live OK — ${d.cloudflare.fqdn} returned HTTP 200 (agent healthy).`));
-    return 0;
+    return await reportBuild(d, agent, v, opts);
   }
   console.log(c.red(`\ncheck --live: HTTP ${r.status} (expected 200).`));
   if (r.status === 403) console.log(c.dim('  403 = Cloudflare Access rejected the token — verify the Service Auth policy and token validity.'));
@@ -109,4 +109,40 @@ async function runCheckLive(file, opts = {}) {
   return 1;
 }
 
-module.exports = { runCheckLive, logsScript };
+// Which commit is the agent ACTUALLY running -- asked of the agent, not inferred from what a
+// rebuild was told to build. An agent on an image built before the stamp existed answers
+// commit: null, and that is reported as unknown rather than as a match or a mismatch.
+//
+// --expect <sha> turns the report into a GATE: a mismatch returns non-zero. Prefix comparison in
+// both directions, because a stamp is a short sha and an operator may paste a full one. A
+// '-dirty' suffix never matches away: it is reported loudly and fails an --expect outright,
+// since an image containing uncommitted code is not the commit it names.
+async function reportBuild(d, agent, v, opts = {}) {
+  const expect = String(opts.expect || '').trim();
+  const r = await probe(d.cloudflare.fqdn, agent.clientId, agent.clientSecret, '/build');
+  if (!r.ok || r.status !== 200) {
+    const why = r.ok ? ('HTTP ' + r.status) : r.error;
+    console.log(c.yellow(`  build provenance: UNAVAILABLE (${why}) — rebuild the agent to mount GET /build`));
+    if (expect) { console.log(c.red(`  --expect ${expect} cannot be satisfied: the agent cannot state its commit.`)); return 1; }
+    return 0;
+  }
+  let j = null;
+  try { j = JSON.parse(r.body); } catch { /* not json */ }
+  const commit = j && typeof j.commit === 'string' ? j.commit : null;
+  if (!commit) {
+    console.log(c.yellow('  build provenance: UNKNOWN — the image carries no build stamp (built before provenance landed)'));
+    if (expect) { console.log(c.red(`  --expect ${expect} cannot be satisfied: the image carries no stamp.`)); return 1; }
+    return 0;
+  }
+  const dirty = /-dirty$/.test(commit);
+  console.log(`  build provenance: running ${c.bold(commit)}  (${j.profile || '?'} / ${j.name || '?'})`);
+  if (dirty) console.log(c.red('  !!!! this image was built from a tree with UNCOMMITTED changes -- it is not the commit it names'));
+  if (!expect) return 0;
+  const bare = commit.replace(/-dirty$/, '');
+  const matches = !dirty && (bare.startsWith(expect) || expect.startsWith(bare));
+  if (matches) { console.log(c.green(`  --expect ${expect}: MATCH`)); return 0; }
+  console.log(c.red(`  --expect ${expect}: MISMATCH -- the agent is running ${commit}`));
+  return 1;
+}
+
+module.exports = { runCheckLive, logsScript, reportBuild };
