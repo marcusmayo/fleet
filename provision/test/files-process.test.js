@@ -77,3 +77,64 @@ test('files/process: the destination path is in scope where the classifier reads
   assert.ok(declLine >= 0 && tryLine >= 0, 'both lines must exist');
   assert.ok(declLine < tryLine, 'dst must be declared BEFORE the try block, not inside it');
 });
+
+// --- staging must never lose a file to a name collision ---------------------------------------
+const { uniqueStageName, safeUploadName, NAME_MAX } = require('../../core/webchat-ops');
+
+function stageDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'stg-'));
+}
+
+test('stage: two long names that sanitise identically are BOTH kept', () => {
+  const a = '08-26 Daily Stand-up Meeting_ STM Product Versioning (SI vs GI), Rating Algorithm Updates, Mess LM Task Reassignment, and AI Training-transcript.txt';
+  const b = '08-26 Daily Stand-up Meeting_ STM Product Versioning (SI vs GI), Rating Algorithm Updates, Mess LM Task Reassignment, and AI Training-transcript - Copy.txt';
+  assert.equal(safeUploadName(a), safeUploadName(b), 'the premise: these collide after sanitising');
+  const dir = stageDir();
+  const name = safeUploadName(a);
+  const one = Buffer.from('first file');
+  const two = Buffer.from('a DIFFERENT file that happens to collide');
+
+  const p1 = uniqueStageName(dir, name, one);
+  assert.deepEqual(p1, { name, reused: false });
+  fs.writeFileSync(path.join(dir, p1.name), one);
+
+  const p2 = uniqueStageName(dir, name, two);
+  assert.equal(p2.reused, false);
+  assert.notEqual(p2.name, name, 'the second must not take the first name');
+  fs.writeFileSync(path.join(dir, p2.name), two);
+
+  assert.equal(fs.readdirSync(dir).length, 2, 'two uploads, two files');
+  assert.equal(fs.readFileSync(path.join(dir, p1.name), 'utf8'), 'first file', 'the first was not overwritten');
+});
+
+test('stage: re-staging identical bytes is idempotent, not a second copy', () => {
+  const dir = stageDir();
+  const buf = Buffer.from('same every time');
+  const p1 = uniqueStageName(dir, 'note.txt', buf);
+  fs.writeFileSync(path.join(dir, p1.name), buf);
+  const p2 = uniqueStageName(dir, 'note.txt', buf);
+  assert.deepEqual(p2, { name: 'note.txt', reused: true });
+  assert.equal(fs.readdirSync(dir).length, 1, 'clicking Stage twice must not multiply files');
+});
+
+test('stage: a de-duplicated name keeps the extension and respects NAME_MAX', () => {
+  const dir = stageDir();
+  const name = safeUploadName('x'.repeat(300) + '.txt');
+  assert.equal(name.length, NAME_MAX);
+  fs.writeFileSync(path.join(dir, name), Buffer.from('one'));
+  const p = uniqueStageName(dir, name, Buffer.from('two'));
+  assert.notEqual(p.name, name);
+  assert.ok(p.name.endsWith('.txt'), 'the extension survives, or intake cannot type the file');
+  assert.ok(p.name.length <= NAME_MAX, 'a de-duplicated name is still ' + NAME_MAX + ' or under');
+});
+
+test('stage: a third colliding file finds a third name, and matches an existing duplicate', () => {
+  const dir = stageDir();
+  const a = Buffer.from('A'), b = Buffer.from('B'), c = Buffer.from('C');
+  fs.writeFileSync(path.join(dir, uniqueStageName(dir, 'n.txt', a).name), a);
+  const p2 = uniqueStageName(dir, 'n.txt', b); fs.writeFileSync(path.join(dir, p2.name), b);
+  const p3 = uniqueStageName(dir, 'n.txt', c); fs.writeFileSync(path.join(dir, p3.name), c);
+  assert.equal(new Set(['n.txt', p2.name, p3.name]).size, 3, 'three distinct names');
+  assert.deepEqual(uniqueStageName(dir, 'n.txt', b), { name: p2.name, reused: true },
+    're-staging B must find the copy it already has, not make a fourth');
+});
