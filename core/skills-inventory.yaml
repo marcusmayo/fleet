@@ -8,7 +8,7 @@
 # It cannot edit what it takes -- there is no override, because an override is how a shared
 # definition stops being shared. A profile that needs different behaviour defines its own
 # skill, and a route defined in both places is REFUSED at boot, not silently resolved.
-contract: 2
+contract: 3
 skills:
   - route: /run-audit-verify
     bin: node

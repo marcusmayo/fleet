@@ -3,12 +3,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { composeSkills } = require('../../core/skills');
+const { composeSkills, assertContract } = require('../../core/skills');
 
 // provision/ has no js-yaml on purpose, so these pin PARSED input -- the same boundary
 // assertContract was written to respect.
 const INV = {
-  contract: 2,
+  contract: 3,
   skills: [
     { route: '/run-check-pii', bin: 'node', args: ['scripts/compliance-checks.js', 'pii'], timeout: 15000, record: 'pii-redaction', category: 'Governance' },
     { route: '/run-scan-tree', bin: 'node', args: ['scripts/scan-tree.js', '.'], timeout: 60000, category: 'Governance' },
@@ -17,27 +17,27 @@ const INV = {
 const mine = (route) => ({ route, bin: 'node', args: ['scripts/x.js'] });
 
 test('inventory: a named route resolves to the shared definition, unmodified', () => {
-  const got = composeSkills({ contract: 2, inventory: ['/run-check-pii'], skills: [] }, INV);
+  const got = composeSkills({ contract: 3, inventory: ['/run-check-pii'], skills: [] }, INV);
   assert.equal(got.length, 1);
   assert.deepEqual(got[0], INV.skills[0]);
   assert.equal(got[0], INV.skills[0], 'the profile gets the shared object, not a copy it could diverge from');
 });
 
 test('inventory: taken skills come first, then the profile\'s own', () => {
-  const got = composeSkills({ contract: 2, inventory: ['/run-scan-tree'], skills: [mine('/run-mine')] }, INV);
+  const got = composeSkills({ contract: 3, inventory: ['/run-scan-tree'], skills: [mine('/run-mine')] }, INV);
   assert.deepEqual(got.map((s) => s.route), ['/run-scan-tree', '/run-mine']);
 });
 
 test('inventory: naming a route the inventory does not define THROWS, and says what it offers', () => {
   assert.throws(
-    () => composeSkills({ contract: 2, inventory: ['/run-imaginary'], skills: [] }, INV),
+    () => composeSkills({ contract: 3, inventory: ['/run-imaginary'], skills: [] }, INV),
     (e) => /does not define/.test(e.message) && /run-check-pii/.test(e.message),
   );
 });
 
 test('inventory: a route both taken and defined locally is REFUSED, not silently resolved', () => {
   assert.throws(
-    () => composeSkills({ contract: 2, inventory: ['/run-check-pii'], skills: [mine('/run-check-pii')] }, INV),
+    () => composeSkills({ contract: 3, inventory: ['/run-check-pii'], skills: [mine('/run-check-pii')] }, INV),
     /appears twice/,
   );
 });
@@ -60,7 +60,7 @@ test('inventory: a non-list inventory key is refused rather than coerced', () =>
 
 test('inventory: the inventory carries its own contract, and a newer one is refused', () => {
   assert.throws(
-    () => composeSkills({ contract: 2, inventory: ['/run-check-pii'], skills: [] }, { contract: 99, skills: INV.skills }),
+    () => composeSkills({ contract: 3, inventory: ['/run-check-pii'], skills: [] }, { contract: 99, skills: INV.skills }),
     /NEWER than its core/,
   );
 });
@@ -74,4 +74,21 @@ test('inventory: the shipped fleet-core inventory names exactly the nine that we
     '/run-check-pause', '/run-check-pii', '/run-check-secrets', '/run-check-vuln',
     '/run-scan-tree',
   ]);
+});
+
+// --- the contract number is the mechanism, not decoration ------------------------------------
+test('inventory: taking while declaring contract 2 is refused -- an older core would mount without them', () => {
+  assert.throws(
+    () => composeSkills({ contract: 2, inventory: ['/run-check-pii'], skills: [] }, INV),
+    /requires contract: 3/,
+  );
+});
+
+test('inventory: a profile that takes NOTHING may still declare contract 2', () => {
+  assert.deepEqual(composeSkills({ contract: 2, skills: [mine('/a')] }, null).map((s) => s.route), ['/a']);
+});
+
+test('inventory: contract 3 is the current ceiling, and 4 is refused', () => {
+  assert.equal(assertContract({ contract: 3, skills: [] }), 3);
+  assert.throws(() => assertContract({ contract: 4, skills: [] }), /NEWER than its core/);
 });

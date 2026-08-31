@@ -456,7 +456,12 @@ function resolveParams(params, req) {
 // 1  bin/args/handler, requireFile, record  (every agent before the grammar)
 // 2  + declared request params
 // Absent means 1, so an untouched agent keeps working and needs no edit.
-const SKILLS_CONTRACT_MAX = 2;
+// 3 = the inventory. A core that predates composeSkills reads up to 2, so a profile that takes
+// from the inventory MUST declare 3 -- and that older core then refuses it by number instead of
+// accepting the file, ignoring the key it does not understand, and silently mounting a skill set
+// with the taken skills missing. The number is the whole mechanism: without the bump, a stale
+// vendored core degrades quietly, which is the one failure mode a contract exists to prevent.
+const SKILLS_CONTRACT_MAX = 3;
 
 // Pure, so the fleet suite can pin it without js-yaml (which agents supply via NODE_PATH
 // and provision/ deliberately does not depend on). Returns the accepted contract number.
@@ -495,6 +500,14 @@ function composeSkills(doc, invDoc) {
   if (!Array.isArray(want)) throw new Error('skills.yaml: inventory must be a list of routes');
   let taken = [];
   if (want.length) {
+    // Declaring the key is what makes an OLDER core refuse the file rather than quietly drop the
+    // taken skills. A profile that takes while claiming contract 2 would still load correctly
+    // here, and load WRONG on any agent whose vendored core is behind -- so refuse it here too.
+    if (assertContract(doc) < 3) {
+      throw new Error('skills.yaml: taking from the inventory requires contract: 3 -- '
+        + 'declaring less means an older vendored fleet-core accepts this file and mounts '
+        + 'without the taken skills instead of refusing it');
+    }
     if (!invDoc || !Array.isArray(invDoc.skills)) throw new Error('skills-inventory.yaml: expected top-level skills: [ ... ]');
     assertContract(invDoc);
     const byRoute = new Map(invDoc.skills.map((s) => [s && s.route, s]));
