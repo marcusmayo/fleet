@@ -69,3 +69,47 @@ test('toolset: stdlib imports are not reported as packages that must ship', () =
   });
   assert.deepStrictEqual(scan(root).external, ['openpyxl']);
 });
+
+// --- the declaration is an INVENTORY, not a subset of what happens to be reached -------------
+test('toolset: a tool carried in the repo but absent from the declaration is a fault', () => {
+  const root = mk({
+    'tools/a.py': '', 'tools/orphan.py': '',
+    'system/skills.yaml': 'skills:\n  - route: /x\n    args: [tools/a.py]\n',
+    'system/toolset.yaml': 'tools:\n  - a\n',
+  });
+  const s = scan(root);
+  assert.deepEqual(s.undeclared, [], 'everything reached is declared');
+  assert.deepEqual(s.carriedUndeclared, ['orphan'], 'the carried orphan is the fault');
+  assert.equal(s.ok, false, 'an unlisted tool in the image must not pass');
+});
+
+test('toolset: a declaration naming a tool the repo does not have is a fault', () => {
+  const root = mk({
+    'tools/a.py': '',
+    'system/skills.yaml': 'skills:\n  - route: /x\n    args: [tools/a.py]\n',
+    'system/toolset.yaml': 'tools:\n  - a\n  - ghost\n',
+  });
+  const s = scan(root);
+  assert.deepEqual(s.declaredMissing, ['ghost'], 'a declaration that names an absent tool is a lie');
+  assert.equal(s.ok, false);
+});
+
+test('toolset: a complete declaration passes, unreached tools included', () => {
+  const root = mk({
+    'tools/a.py': '', 'tools/spare.py': '',
+    'system/skills.yaml': 'skills:\n  - route: /x\n    args: [tools/a.py]\n',
+    'system/toolset.yaml': 'tools:\n  - a\n  - spare\n',
+  });
+  const s = scan(root);
+  assert.deepEqual(s.unreached, ['spare'], 'still reported as carried-but-unreached');
+  assert.equal(s.ok, true, 'declared and present in both directions');
+});
+
+test('toolset: an empty declaration is a real statement, and holds only while nothing is carried', () => {
+  const empty = scan(mk({ 'system/toolset.yaml': 'tools: []\n' }));
+  assert.equal(empty.adopted, true, 'an empty list is adoption, not absence');
+  assert.equal(empty.ok, true);
+  const later = scan(mk({ 'tools/new.py': '', 'system/toolset.yaml': 'tools: []\n' }));
+  assert.deepEqual(later.carriedUndeclared, ['new'], 'a tool dropped in later must be declared');
+  assert.equal(later.ok, false);
+});
