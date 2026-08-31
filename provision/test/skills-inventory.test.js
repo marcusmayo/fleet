@@ -66,14 +66,38 @@ test('inventory: the inventory carries its own contract, and a newer one is refu
 });
 
 // The shipped file, read as TEXT -- no parser needed to assert which routes it names.
-test('inventory: the shipped fleet-core inventory names exactly the nine that were duplicated', () => {
+test('inventory: the shipped fleet-core inventory names exactly the twelve shared definitions', () => {
   const raw = fs.readFileSync(path.join(__dirname, '..', '..', 'core', 'skills-inventory.yaml'), 'utf8');
   const routes = [...raw.matchAll(/^\s*-\s*route:\s*(\S+)\s*$/gm)].map((m) => m[1]).sort();
   assert.deepEqual(routes, [
-    '/run-audit-verify', '/run-check-auth', '/run-check-backup', '/run-check-net',
-    '/run-check-pause', '/run-check-pii', '/run-check-secrets', '/run-check-vuln',
-    '/run-scan-tree',
+    '/queue', '/queue-clear',
+    '/run-audit-verify', '/run-capability-status', '/run-check-auth', '/run-check-backup',
+    '/run-check-net', '/run-check-pause', '/run-check-pii', '/run-check-secrets',
+    '/run-check-vuln', '/run-scan-tree',
   ]);
+});
+
+test('inventory: /queue and /queue-clear carry ONE category, so two profiles cannot disagree', () => {
+  const raw = fs.readFileSync(path.join(__dirname, '..', '..', 'core', 'skills-inventory.yaml'), 'utf8');
+  const blocks = raw.split(/^  - route: /m).slice(1);
+  const cat = (route) => {
+    const b = blocks.find((x) => x.startsWith(route + '\n'));
+    assert.ok(b, route + ' is not in the inventory');
+    const m = b.match(/^    category:\s*(\S+)\s*$/m);
+    return m && m[1];
+  };
+  assert.equal(cat('/queue'), 'Intake');
+  assert.equal(cat('/queue-clear'), 'Intake');
+});
+
+test('inventory: a profile may take a subset -- taking is opt-in, not all-or-nothing', () => {
+  const inv = { contract: 3, skills: [
+    { route: '/queue', bin: 'node', args: ['scripts/queue.js'], timeout: 15000, category: 'Intake' },
+    { route: '/run-capability-status', bin: 'node', args: ['scripts/setup-wizard.js', '--status'], timeout: 30000, category: 'Governance' },
+  ] };
+  const got = composeSkills({ contract: 3, inventory: ['/queue'], skills: [] }, inv);
+  assert.deepEqual(got.map((s) => s.route), ['/queue'],
+    'a profile lacking setup-wizard.js simply does not name that route');
 });
 
 // --- the contract number is the mechanism, not decoration ------------------------------------
